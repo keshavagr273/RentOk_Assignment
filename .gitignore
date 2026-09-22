@@ -1,0 +1,40 @@
+# ─── Root-level ignores ───────────────────────────────────────────────────────
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+
+# macOS / Windows noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Backend ──────────────────────────────────────────────────────────────────
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/.env.local
+
+# ─── Frontend ─────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env
+
+# Do NOT ignore these (they're needed to build):
+# frontend/.env.example  ← commit this
+# backend/.env.example   ← commit this
