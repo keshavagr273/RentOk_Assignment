@@ -7,6 +7,7 @@
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "migration:run": "dotenv -e .env -- typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
+    "migration:prod": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
     "migration:revert": "dotenv -e .env -- typeorm-ts-node-commonjs migration:revert -d src/data-source.ts"
   },
   "dependencies": {
