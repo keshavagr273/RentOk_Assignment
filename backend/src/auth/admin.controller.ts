@@ -5,6 +5,7 @@ import {
   HttpCode,
   Inject,
   Post,
+  UseGuards,
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -12,6 +13,7 @@ import { Repository } from 'typeorm';
 import { IsIn, IsNotEmpty, IsNumber, IsPositive, IsString, Min } from 'class-validator';
 import { createHash, randomBytes } from 'crypto';
 import { VirtualKey } from './virtual-key.entity';
+import { AdminGuard } from './admin.guard';
 import { REDIS_CLIENT } from '../budget/budget.module';
 import Redis from 'ioredis';
 
@@ -30,12 +32,12 @@ class CreateKeyDto {
 }
 
 /**
- * Admin controller — not auth-protected (by design for this scope).
- * In production, this would require admin-only auth (e.g. a separate admin key).
+ * Admin controller — protected by AdminGuard (requires Authorization: Bearer <ADMIN_TOKEN>).
  *
  * POST /admin/keys — create a virtual key (returns raw key ONCE)
  * GET  /admin/keys — list all virtual keys (for the admin dashboard)
  */
+@UseGuards(AdminGuard)
 @Controller('admin')
 export class AdminController {
   constructor(

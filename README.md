@@ -278,6 +278,7 @@ npm run dev
 1. **Create a Virtual Key**:
 ```bash
 curl -X POST http://localhost:3000/admin/keys \
+  -H "Authorization: Bearer adm_rentok_secret_token_2026" \
   -H "Content-Type: application/json" \
   -d '{"name": "production-service", "budget_type": "requests", "budget_limit": 100}'
 ```
@@ -334,7 +335,9 @@ All gateway settings are environment-driven and verified at bootstrap:
 | `CACHE_SIMILARITY_THRESHOLD` | `0.95` | Cosine similarity threshold for semantic cache hits |
 | `CACHE_CHARGE_ON_HIT` | `false` | Whether cache hits consume user request/token budget |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model for semantic cache vectors (must produce 1536-dim output; `text-embedding-ada-002` also compatible) |
+| `ADMIN_TOKEN` | `adm_rentok_secret_token_2026` | Static bearer token required for `/admin/keys` (GET/POST) |
 | `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:3000` | Backend API URL used by the Next.js frontend |
+| `NEXT_PUBLIC_ADMIN_TOKEN` | `adm_rentok_secret_token_2026` | Admin token passed by the Next.js frontend to manage keys |
 
 ---
 
@@ -396,6 +399,7 @@ Proxies chat completion requests with automatic authentication, budget deduction
 ### 2. `POST /admin/keys`
 Provisions a new virtual key with a specified budget quota and policy.
 
+- **Headers**: `Authorization: Bearer <ADMIN_TOKEN>`, `Content-Type: application/json`
 - **Request Body**:
 ```json
 {
@@ -414,6 +418,7 @@ Provisions a new virtual key with a specified budget quota and policy.
 ### 3. `GET /admin/keys`
 Retrieves all virtual keys with metadata, current budget usage, and status.
 
+- **Headers**: `Authorization: Bearer <ADMIN_TOKEN>`
 - **Response (200 OK)**:
 ```json
 [

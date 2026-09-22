@@ -171,6 +171,14 @@ The gateway is not just a proxy — it's a **trust boundary**. It's the single c
 
 Concretely: if I let callers self-report token usage for billing, they'd under-report. If I enforce client-side only, a misbehaving client can run up a $300 bill before the next sync cycle. The gateway blocks it before the API call is even made.
 
+### Privilege Separation: Admin Token vs. Virtual Keys
+
+A related trust boundary is **privilege separation**:
+- **Callers** authenticate strictly with gateway-issued virtual keys (`gw_...`) on `/v1/chat/completions` and `/usage?key=...`. They can run LLM inference and inspect their own spend self-service.
+- **Administrators** authenticate with a dedicated static bearer token (`ADMIN_TOKEN`) via `AdminGuard` on `/admin/keys` (`GET` and `POST`).
+
+An open admin endpoint that allows anyone to inspect all virtual keys, budget limits, and tenant metadata is an account-level vulnerability. Gating `/admin/keys` behind `ADMIN_TOKEN` ensures account-level key provisioning and metadata inspection are isolated from caller traffic.
+
 ---
 
 ## 5. Concurrency: Two Requests on the Same Near-Exhausted Key
@@ -210,7 +218,7 @@ The classic failure mode: key has 1 request remaining. Two requests arrive 2ms a
 | Circuit breaker | Right call for production; requires persistent state + background health checks. Needs another week to do well |
 | Automated tests | Made a conscious call to integration-test with curl against the deployed URL instead. Would add before any team relied on this service |
 | Live provider pings in /health | The `/health` endpoint checks Redis and Postgres but reports provider key configuration status (`configured`/`unconfigured`), not live reachability. Pinging providers on every health check is expensive; failures surface in `usage_logs` instead |
-| Admin endpoint auth | `POST /admin/keys` is currently unprotected (acceptable for assignment scope). In production it would require a separate admin key or session |
+| Multi-admin RBAC / sessions | Admin routes are protected via static bearer token (`ADMIN_TOKEN`). Full multi-user RBAC and session management were cut as out of scope |
 | Client-side token counting | Used provider-reported token counts; more accurate for post-call logging at the cost of imprecise pre-call budget estimates for `tokens` type budgets |
 
 ---
@@ -252,7 +260,7 @@ The classic failure mode: key has 1 request remaining. Two requests arrive 2ms a
 4. `/admin/keys/{id}/rotate` endpoint (currently a key must be deleted and recreated)
 5. Per-key per-minute rate limiting (burst abuse prevention)
 6. Threshold evaluation suite for the semantic cache
-7. Admin auth on `POST/GET /admin/keys` (currently unprotected by design for this scope)
+7. Granular RBAC and session-based audit tracking (currently gated via static `ADMIN_TOKEN`)
 
 ---
 
