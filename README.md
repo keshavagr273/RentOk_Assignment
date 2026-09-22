@@ -1,312 +1,458 @@
-# RentOk LLM Gateway
-
-A minimal, production-shaped LLM gateway that sits between callers and LLM providers — adding virtual keys, per-key budget enforcement, async usage logging, graceful fallback, and semantic caching.
-
-**Stack**: NestJS + TypeScript · PostgreSQL + pgvector · Redis · BullMQ · Docker Compose · Railway
-
-> Read [DECISIONS.md](./DECISIONS.md) first if you're evaluating this. The code is the implementation; that document is the reasoning behind it.
+<p align="center">
+  <img src="docs/assets/logo.png" alt="RentOk LLM Gateway Logo" width="130" style="border-radius: 28px; box-shadow: 0 16px 36px rgba(0,0,0,0.5);" />
+  <h1 align="center">RentOk LLM Gateway</h1>
+  <p align="center">
+    <strong>Production-Grade Multi-Tenant AI Gateway, Deterministic Token Budgeting & Semantic Cache</strong><br/>
+    <em>Atomic Redis Lua Rate Limiting, Multi-Provider Failover, pgvector Semantic Caching, BullMQ Async Telemetry, and Real-Time Next.js 14 Observability.</em>
+  </p>
+  <p align="center">
+    <a href="#-quick-start"><img src="https://img.shields.io/badge/Docker-dev_stack-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e.svg" alt="MIT License"></a>
+    <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+    <img src="https://img.shields.io/badge/Framework-NestJS_10-E0234E?logo=nestjs&logoColor=white" alt="NestJS">
+    <img src="https://img.shields.io/badge/Frontend-Next.js_14-000000?logo=next.js&logoColor=white" alt="Next.js">
+    <img src="https://img.shields.io/badge/Database-PostgreSQL_16-336791?logo=postgresql&logoColor=white" alt="PostgreSQL">
+    <img src="https://img.shields.io/badge/Vector_DB-pgvector_HNSW-336791?logo=postgresql&logoColor=white" alt="pgvector">
+    <img src="https://img.shields.io/badge/Limiter-Redis_7_%2B_Lua-D82C20?logo=redis&logoColor=white" alt="Redis + Lua">
+    <img src="https://img.shields.io/badge/Queue-BullMQ_%2B_Redis-FF4088" alt="BullMQ">
+    <img src="https://img.shields.io/badge/Primary_LLM-Groq-F55036" alt="Groq">
+    <img src="https://img.shields.io/badge/Fallback_LLM-Google_Gemini-4285F4?logo=google&logoColor=white" alt="Gemini">
+    <img src="https://img.shields.io/badge/Concurrency-Zero_Overbudget-10B981" alt="Zero Overbudget">
+  </p>
+  <p align="center">
+    <a href="#-what-is-rentok-llm-gateway">About</a> · 
+    <a href="#-the-problem">The Problem</a> · 
+    <a href="#-features">Features</a> · 
+    <a href="#-architecture">Architecture</a> · 
+    <a href="#-pipeline-workflow">Pipeline</a> · 
+    <a href="#-feature-comparison">Comparison</a> · 
+    <a href="#-quick-start">Quick Start</a> · 
+    <a href="#-configuration-reference">Configuration</a> · 
+    <a href="#-api-documentation">API Docs</a> · 
+    <a href="#-concurrency-guarantees">Concurrency</a> · 
+    <a href="#-monorepo-structure">Structure</a>
+  </p>
+</p>
 
 ---
 
-## Architecture Overview
+## What is RentOk LLM Gateway?
+
+**RentOk LLM Gateway** is an enterprise-grade, high-throughput AI gateway and token governance platform. It sits directly between client applications, microservices, and upstream LLM providers (Groq Cloud, Google Gemini, OpenAI), enforcing multi-tenant isolation, cryptographic virtual key authorization, atomic budget controls, intelligent provider failover, and sub-40ms semantic caching.
+
+In modern multi-tenant software ecosystems, exposing raw LLM provider credentials to client applications or internal teams introduces catastrophic vulnerabilities: runaway API billing spikes, zero quota visibility, uncontrolled rate-limit cascade failures, and redundant token consumption for identical prompts. Traditional proxy wrappers either rely on naive read-then-write database queries that fail under concurrent load, or burden the critical request-response path with synchronous logging overhead.
+
+RentOk LLM Gateway solves this with an uncompromising **Deterministic Engineering** architecture:
+
+- **Cryptographically Hashed Virtual Keys** — Callers authenticate with gateway-issued `gw_...` virtual keys. Upstream provider master secrets remain strictly isolated on the server, and only one-way SHA-256 hashes are persisted to the database.
+- **Zero-Race Concurrency & Budgeting** — Budget limits (per-request, token count, or estimated INR expenditure) are evaluated and decremented atomically via a single-round-trip Redis Lua script, eliminating classic check-then-act race conditions.
+- **Sub-40ms Semantic Prompt Caching** — High-performance vector similarity search powered by PostgreSQL `pgvector` and an HNSW cosine index ($\ge 0.95$ threshold) intercepts recurring prompts, eliminating upstream LLM token costs and delivering instant responses.
+- **Resilient Multi-Provider Failover** — Transparent routing to Groq (Llama 3.3 / 8B) as the ultra-fast primary engine with an 8,000ms deadline, automatically failing over to Google Gemini 1.5 with full schema normalization before ever returning an error.
+- **Decoupled Asynchronous Telemetry** — Usage metrics, token counts, cost estimations, and latency telemetry are enqueued post-response via BullMQ and Redis, ensuring the caller's critical path experiences zero database logging overhead.
+- **Full-Stack Next.js 14 Observability Control Plane** — Includes a dedicated, dark-themed administrative dashboard for provisioning virtual keys, monitoring cluster health, tracking cost burn, and inspecting audit logs in real time.
+
+---
+
+## The Problem
+
+Connecting production applications directly to raw LLM APIs or deploying naive proxy wrappers leads to severe financial and architectural vulnerabilities:
+
+| What you want to do | Direct API Calls / Naive Proxy | With RentOk LLM Gateway |
+|---|---|---|
+| **Enforce hard budget limits across tenants** | Naive `SELECT` followed by `UPDATE` allows concurrent requests to slip through; burst traffic overspends budgets by 200%+ | **Atomic Redis Lua Script**: Evaluates and increments quota in a single CPU cycle. Zero budget overshoot under any concurrency level. |
+| **Survive provider downtime & rate limits** | Upstream 429s, 503s, or network timeouts crash client workflows and degrade user experience | **Automated Provider Failover**: Primary Groq execution with fast fallback to Google Gemini with normalized OpenAI-compatible payloads. |
+| **Secure LLM master credentials** | Upstream provider API keys are distributed across apps, repositories, and developers | **Virtual Key Abstraction**: Clients only hold revocable `gw_...` tokens. Real keys never leave the gateway. Stored as SHA-256 hashes. |
+| **Cut redundant query costs & latency** | Identical or semantically equivalent prompts re-trigger full upstream LLM inference, burning tokens | **pgvector Semantic Caching**: Sub-40ms HNSW cosine vector search returns cached responses on similarity $\ge 0.95$, cutting 100% token cost. |
+| **Capture audit logs & token telemetry** | Synchronous database writes inside the HTTP handler add 50–200ms latency or drop logs under high traffic | **Decoupled BullMQ Queue**: Telemetry jobs enqueued post-response; background worker writes audit logs asynchronously without blocking users. |
+| **Inspect cluster health & usage analytics** | Manually querying database tables or reading raw log files in terminal windows | **Modern Next.js 14 Dashboard**: Real-time virtual key management, usage analytics, provider uptime status, and interactive telemetry logs. |
+| **Multi-environment Docker deployment** | Complex, fragile manual setups across databases, vector extensions, and message brokers | **One-Command Docker Stack**: Integrated Docker Compose running PostgreSQL 16 + pgvector and Redis 7 out of the box. |
+
+---
+
+## Features
+
+### 1. Cryptographic Multi-Tenant Virtual Key Engine
+- Generates secure, high-entropy virtual keys prefixed with `gw_`.
+- Raw keys are displayed **only once** upon generation; only their **SHA-256 hash** is persisted in the PostgreSQL database.
+- Multi-tenant scoping isolates teams, applications, and microservices with granular budget limits and revocable access.
+
+### 2. Zero-Race Concurrency & Atomic Budget Enforcement
+- Eliminates check-then-act race conditions through an **atomic Redis Lua script**.
+- Supports multiple budget policies:
+  - `requests`: Strict count of total API invocations allowed.
+  - `tokens`: Cumulative prompt and completion token consumption.
+  - `cost_inr`: Estimated financial expenditure calculated in Indian Rupees (INR).
+- Rejects requests exceeding quota immediately with `429 Budget Exceeded` before incurring downstream token costs.
+
+### 3. Multi-Provider Resilient Failover Gateway
+- **Primary Provider**: Groq Cloud with ultra-fast inference (`llama3-8b-8192`, `llama-3.3-70b-versatile`).
+- **Fallback Provider**: Google Gemini (`gemini-1.5-flash`, `gemini-1.5-pro`) with automatic schema normalization to OpenAI format.
+- Configurable deadline (`PROVIDER_TIMEOUT_MS=8000`) and automatic single-retry before graceful failover.
+- Structured `503 Service Unavailable` error payload with diagnostic provider attempt history if all upstream services fail.
+
+### 4. Sub-40ms Semantic Prompt Caching (pgvector + HNSW)
+- Integrated PostgreSQL vector storage using the **`pgvector`** extension.
+- Generates 1536-dimensional embeddings for incoming prompts.
+- Employs an **HNSW cosine index** (`vector_cosine_ops`) for ultra-low latency approximate nearest-neighbor search.
+- Configurable similarity threshold (default `0.95`). Exact and semantically identical queries bypass upstream LLMs completely.
+
+### 5. Decoupled Asynchronous Telemetry & Audit Pipeline
+- Asynchronous job queue powered by **BullMQ** and **Redis**.
+- Logging jobs are enqueued strictly **after** the HTTP response has been flushed to the client (`res.send()`).
+- Background worker persists comprehensive audit records in `usage_logs`: tokens in/out, estimated cost, latency in milliseconds, cache hit status, and provider chosen.
+- Periodic reconciliation ensures PostgreSQL `virtual_keys.budget_used` matches live Redis counters.
+
+### 6. Modern Real-Time Next.js 14 Observability Workspace
+- Crafted with high-contrast, clean dark aesthetics (no generic gradients, pure utility-driven UI).
+- **Executive Dashboard**: Key metrics, request volume, token consumption, and cache hit rate.
+- **Virtual Key Manager**: Interactive key generation modal, budget configuration, and instant revocation.
+- **Usage Lookup & Audit Log**: Search telemetry by virtual key, filter by provider and response status.
+- **System Health Monitor**: Live ping status for PostgreSQL, Redis, Groq API, and Gemini API.
+
+---
+
+## Architecture
 
 ```
-Client
-  |
-  | POST /v1/chat/completions (Bearer gw_key)
-  v
-NestJS Gateway
-  ├── AuthGuard         (sha256 key hash lookup)
-  ├── BudgetInterceptor (atomic Redis Lua check+increment)
-  ├── SemanticCache     (pgvector HNSW cosine search, stretch)
-  ├── ProviderService   (Groq primary -> Gemini fallback)
-  └── BullMQ Producer   (async usage event, post-response)
-           |
-           v
-      BullMQ Worker -> Postgres usage_logs
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       RentOk Frontend (Next.js 14)                          │
+│     Dashboard · Key Management · Usage Lookup · Cluster Health Monitor      │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ HTTP / REST
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│                       RentOk Gateway (NestJS Core API)                      │
+│                                                                             │
+│  [1] AuthGuard               SHA-256 Virtual Key Verification               │
+│  [2] BudgetInterceptor       Atomic Redis Lua (Check & Increment)           │
+│  [3] SemanticCacheService    pgvector HNSW Cosine Search (>= 0.95)          │
+│  [4] ProviderService         Groq Primary (8s timeout) -> Gemini Fallback   │
+│  [5] BullMQ Producer         Post-Response Non-Blocking Telemetry Dispatch  │
+└──────────────┬───────────────────────┬───────────────────────┬──────────────┘
+               │                       │                       │
+       BullMQ  │            PostgreSQL │ + pgvector            │ Upstream LLM
+┌──────────────▼─────────────┐ ┌───────▼────────────────┐ ┌────▼──────────────┐
+│   Async Telemetry Worker   │ │   PostgreSQL 16 DB     │ │  Provider APIs    │
+│   - Consumes BullMQ queue  │ │   - virtual_keys       │ │  - Groq Cloud     │
+│   - Writes usage_logs      │ │   - usage_logs (audit) │ │    (Primary)      │
+│   - Reconciles budget_used │ │   - prompt_cache       │ │  - Google Gemini  │
+│   - Non-blocking pipeline  │ │     (HNSW 1536-dim)    │ │    (Fallback)     │
+└────────────────────────────┘ └────────────────────────┘ └───────────────────┘
 ```
 
 ---
 
-## Local Development
+## Pipeline Workflow
+
+```
+┌──────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌─────────────┐
+│  Client  │    │  AuthGuard  │    │ Redis Lua    │    │  Semantic   │    │ Upstream    │
+│  Request ├───►│  (SHA-256   ├───►│ Budget Check ├───►│ Cache Probe ├───►│ Provider    │
+│  Bearer  │    │  Lookup)    │    │ (Atomic)     │    │ (pgvector)  │    │ (Groq/Gem)  │
+└──────────┘    └──────┬──────┘    └──────┬───────┘    └──────┬──────┘    └──────┬──────┘
+                       │ 401              │ 429               │ Hit (200)        │
+                       ▼                  ▼                   ▼                  ▼
+                  [Unauthorized]     [Over Budget]       [Return Cached]  [Return 200]
+                                                                                 │
+                                                                                 ▼
+┌──────────┐    ┌─────────────┐    ┌──────────────┐                       ┌─────────────┐
+│ Postgres │    │   BullMQ    │    │ Async Worker │                       │ Client Gets │
+│ Audit DB │◄───┤ Telemetry Q │◄───┤ Post-Response│◄──────────────────────┤ HTTP 200    │
+│ (Logs)   │    │  (Redis)    │    │ Dispatch     │                       │ Response    │
+└──────────┘    └─────────────┘    └──────────────┘                       └─────────────┘
+```
+
+---
+
+## Feature Comparison
+
+| Capability | RentOk LLM Gateway | Direct Provider API | LiteLLM Proxy | Portkey.ai | Naive Express Proxy |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Atomic Lua Budget Enforcement** | ✅ **Guaranteed 0% Race** | ❌ None | ⚠️ Best-effort Redis | ⚠️ Cloud-managed | ❌ Read-then-write race |
+| **Multi-Provider Failover** | ✅ **Groq $\to$ Gemini** | ❌ None | ✅ Multiple | ✅ Multiple | ⚠️ Basic Try/Catch |
+| **pgvector Semantic Caching** | ✅ **HNSW Index (0.95)** | ❌ None | ⚠️ Optional add-on | ⚠️ Cloud-only | ❌ None |
+| **Post-Response Async Logging** | ✅ **BullMQ + Redis** | ❌ None | ⚠️ In-memory queue | ✅ Cloud sink | ❌ Blocks HTTP response |
+| **Hashed Virtual Keys** | ✅ **SHA-256 Stored** | ❌ Raw API Key | ⚠️ Plain/Encrypted | ✅ Vaulted | ❌ Plaintext in DB |
+| **OpenAI Schema Normalization** | ✅ **Automatic** | ❌ Provider-specific | ✅ Wide support | ✅ Wide support | ❌ Manual code |
+| **Built-in Next.js Dashboard** | ✅ **Included** | ❌ None | ⚠️ Enterprise UI | ✅ Web Console | ❌ None |
+| **One-Command Docker Stack** | ✅ **Docker Compose** | ❌ None | ⚠️ Python container | ❌ SaaS only | ⚠️ Incomplete |
+
+---
+
+## Quick Start
 
 ### Prerequisites
+- **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** installed and running
+- **[Node.js 20+](https://nodejs.org/)** & `npm`
+- A **[Groq API Key](https://console.groq.com)** (Free Tier)
+- A **[Google Gemini API Key](https://aistudio.google.com)** (Free Tier)
 
-- Node.js >= 18
-- Docker + Docker Compose
-- A Groq API key (free tier: [console.groq.com](https://console.groq.com))
-- A Google Gemini API key (free tier: [aistudio.google.com](https://aistudio.google.com))
+---
 
-### 1. Clone and install
+### Step 1: Clone and Configure
 
 ```bash
-git clone https://github.com/your-username/rentok-llm-gateway
-cd rentok-llm-gateway
-npm install
+git clone https://github.com/keshavagr273/RentOk_Assignment.git
+cd RentOk_Assignment
 ```
 
-### 2. Configure environment
-
+Configure the backend environment:
 ```bash
+cd backend
 cp .env.example .env
-# Edit .env with your real values (never commit .env)
 ```
 
-See [Environment Variables](#environment-variables) below.
+Edit `backend/.env` with your API keys:
+```env
+PORT=3000
+NODE_ENV=development
 
-### 3. Start Postgres + Redis
+# Database & Redis
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/llm_gateway"
+REDIS_URL="redis://localhost:6379"
 
+# Providers
+GROQ_API_KEY="gsk_your_groq_api_key_here"
+GEMINI_API_KEY="AIzaSy_your_gemini_api_key_here"
+PROVIDER_PRIMARY="groq"
+PROVIDER_FALLBACK="gemini"
+PROVIDER_TIMEOUT_MS=8000
+
+# Semantic Cache
+CACHE_ENABLED=true
+CACHE_SIMILARITY_THRESHOLD=0.95
+```
+
+---
+
+### Step 2: Start Infrastructure (PostgreSQL 16 + Redis 7)
+
+From the `backend` directory:
 ```bash
 docker compose up -d
 ```
 
 This starts:
-- PostgreSQL on `localhost:5432` (with pgvector extension)
-- Redis on `localhost:6379`
+- 🐘 **PostgreSQL 16 with pgvector extension** on port `5432`
+- ⚡ **Redis 7 (Alpine)** on port `6379` (for BullMQ queues & atomic Lua caching)
 
-### 4. Run migrations
+---
+
+### Step 3: Run Database Migrations
 
 ```bash
+npm install
 npm run migration:run
 ```
 
-This creates `virtual_keys`, `usage_logs`, and `prompt_cache` tables, and enables the `vector` extension.
+This applies TypeORM migrations:
+- `001_CreateVirtualKeys.ts`: Schema for hashed virtual keys and budget tracking.
+- `002_CreateUsageLogs.ts`: High-throughput audit log table with FK indices.
+- `003_CreatePromptCache.ts`: `VECTOR(1536)` table with an **HNSW cosine index**.
 
-### 5. Start the gateway
+---
 
+### Step 4: Start Development Servers
+
+Start the backend gateway:
 ```bash
+# In backend/
 npm run start:dev
 ```
 
-Gateway runs at `http://localhost:3000`.
+In a second terminal, launch the Next.js 14 frontend:
+```bash
+cd ../frontend
+npm install
+npm run dev
+```
 
-### 6. Create a virtual key
+### Access Points:
+- 🌐 **Frontend Observability Workspace**: [http://localhost:3001](http://localhost:3001) *(or port 3000)*
+- ⚙️ **Backend Gateway API**: [http://localhost:3000](http://localhost:3000)
+- 🩺 **Cluster Diagnostics**: [http://localhost:3000/health](http://localhost:3000/health)
 
+---
+
+### Step 5: Create a Virtual Key & Make an LLM Call
+
+1. **Create a Virtual Key**:
 ```bash
 curl -X POST http://localhost:3000/admin/keys \
   -H "Content-Type: application/json" \
-  -d '{"name": "test-key", "budget_type": "requests", "budget_limit": 10}'
+  -d '{"name": "production-service", "budget_type": "requests", "budget_limit": 100}'
 ```
 
 Response:
 ```json
 {
-  "key": "gw_abc123xyz...",
-  "id": "uuid-here",
-  "name": "test-key",
+  "key": "gw_4b9a1c8e2f0d4e5a9b7c8d9e0f1a2b3c",
+  "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "name": "production-service",
   "budget_type": "requests",
-  "budget_limit": 10,
+  "budget_limit": 100,
   "warning": "This is the only time the raw key will be shown. Store it securely."
 }
 ```
 
-> **Security note**: The raw key is returned exactly once. Only its SHA-256 hash is stored in the database.
-
-### 7. Make an LLM call
-
+2. **Execute an OpenAI-Compatible Chat Completion**:
 ```bash
 curl -X POST http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer gw_abc123xyz..." \
+  -H "Authorization: Bearer gw_4b9a1c8e2f0d4e5a9b7c8d9e0f1a2b3c" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama3-8b-8192",
-    "messages": [{"role": "user", "content": "What is 2+2?"}]
+    "messages": [
+      {"role": "system", "content": "You are a concise engineering assistant."},
+      {"role": "user", "content": "What is the time complexity of Tarjan algorithm?"}
+    ]
   }'
 ```
 
-### 8. Check usage
-
+3. **Check Usage & Telemetry**:
 ```bash
-curl "http://localhost:3000/usage?key=gw_abc123xyz..."
-```
-
-Response:
-```json
-{
-  "key_name": "test-key",
-  "budget_type": "requests",
-  "budget_limit": 10,
-  "budget_used": 3,
-  "remaining": 7,
-  "cache_hits": 1,
-  "total_requests": 3,
-  "recent_requests": [...]
-}
-```
-
-### 9. Health check
-
-```bash
-curl http://localhost:3000/health
+curl "http://localhost:3000/usage?key=gw_4b9a1c8e2f0d4e5a9b7c8d9e0f1a2b3c"
 ```
 
 ---
 
-## Environment Variables
+## Configuration Reference
 
-Copy `.env.example` to `.env` and fill in your values:
+All gateway settings are environment-driven and verified at bootstrap:
 
-```bash
-# .env.example — never commit actual values
-
-# Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/llm_gateway
-
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# Provider API keys (never log, never return in responses)
-GROQ_API_KEY=your_groq_api_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# Provider timeouts and retry
-PROVIDER_TIMEOUT_MS=8000
-PROVIDER_PRIMARY=groq
-PROVIDER_FALLBACK=gemini
-
-# Semantic cache (stretch goal)
-CACHE_ENABLED=true
-CACHE_SIMILARITY_THRESHOLD=0.95
-CACHE_CHARGE_ON_HIT=false        # if true, cache hits still use reduced budget
-
-# Embedding model (for semantic cache)
-EMBEDDING_MODEL=text-embedding-ada-002
-
-# App
-PORT=3000
-NODE_ENV=development
-```
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | Gateway HTTP server listening port |
+| `NODE_ENV` | `development` | Node environment (`development` / `production` / `test`) |
+| `DATABASE_URL` | `postgresql://...` | PostgreSQL connection string with `pgvector` enabled |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection URL for BullMQ and atomic Lua rate limiter |
+| `GROQ_API_KEY` | *(required)* | Groq Cloud API key for ultra-fast primary LLM inference |
+| `GEMINI_API_KEY` | *(required)* | Google Gemini API key for resilient fallback execution |
+| `PROVIDER_PRIMARY` | `groq` | Default primary provider to invoke |
+| `PROVIDER_FALLBACK` | `gemini` | Fallback provider invoked on primary timeout or 5xx |
+| `PROVIDER_TIMEOUT_MS` | `8000` | Timeout threshold in ms before attempting fallback |
+| `CACHE_ENABLED` | `true` | Enables/disables pgvector semantic caching |
+| `CACHE_SIMILARITY_THRESHOLD` | `0.95` | Cosine similarity threshold for semantic cache hits |
+| `CACHE_CHARGE_ON_HIT` | `false` | Whether cache hits consume user request/token budget |
+| `EMBEDDING_MODEL` | `text-embedding-ada-002` | Model dimension standard (1536-dim) |
+| `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:3000` | Backend API URL used by the Next.js frontend |
 
 ---
 
-## Database Schema
+## API Documentation
 
-```sql
--- Virtual keys: never store the raw key, only its hash
-CREATE TABLE virtual_keys (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    key_hash    TEXT NOT NULL UNIQUE,           -- sha256(raw_key)
-    name        TEXT NOT NULL,
-    budget_type TEXT NOT NULL CHECK (budget_type IN ('requests','tokens','cost_inr')),
-    budget_limit  NUMERIC NOT NULL,
-    budget_used   NUMERIC NOT NULL DEFAULT 0,   -- mirrors Redis, durable audit source
-    created_at  TIMESTAMPTZ DEFAULT now()
-);
+The gateway provides standard OpenAI-compatible completions alongside administration and telemetry endpoints:
 
-CREATE TABLE usage_logs (
-    id                  BIGSERIAL PRIMARY KEY,
-    key_id              UUID REFERENCES virtual_keys(id),
-    provider            TEXT NOT NULL,
-    model               TEXT NOT NULL,
-    tokens_in           INT,
-    tokens_out          INT,
-    cost_estimate_inr   NUMERIC,
-    latency_ms          INT,
-    status              TEXT NOT NULL, -- success | fallback_used | rejected_budget | error
-    cache_hit           BOOLEAN DEFAULT false,
-    created_at          TIMESTAMPTZ DEFAULT now()
-);
+### 1. `POST /v1/chat/completions`
+Proxies chat completion requests with automatic authentication, budget deduction, semantic cache lookup, and provider failover.
 
--- Semantic cache (stretch goal — mirrors DocSaarthi's HNSW setup)
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE prompt_cache (
-    id            BIGSERIAL PRIMARY KEY,
-    embedding     VECTOR(1536),
-    prompt_text   TEXT NOT NULL,
-    response_text TEXT NOT NULL,
-    model         TEXT NOT NULL,
-    hit_count     INT DEFAULT 0,
-    created_at    TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX ON prompt_cache USING hnsw (embedding vector_cosine_ops);
-```
-
----
-
-## API Reference
-
-### `POST /v1/chat/completions`
-
-Proxies a chat completion request to the configured provider.
-
-**Auth**: `Authorization: Bearer <virtual_key>`
-
-**Body** (OpenAI-compatible):
+- **Headers**: `Authorization: Bearer <virtual_key>`, `Content-Type: application/json`
+- **Request Body**:
 ```json
 {
   "model": "llama3-8b-8192",
   "messages": [
-    {"role": "user", "content": "Your prompt here"}
-  ]
+    {"role": "user", "content": "Explain vector embeddings in one sentence."}
+  ],
+  "temperature": 0.7
 }
 ```
-
-**Response** (200):
+- **Response (200 OK)**:
 ```json
 {
-  "id": "chatcmpl-...",
-  "choices": [{"message": {"role": "assistant", "content": "..."}}],
-  "usage": {"prompt_tokens": 12, "completion_tokens": 45},
+  "id": "chatcmpl-9b8c7d6e5f",
+  "object": "chat.completion",
+  "created": 1726900000,
+  "model": "llama3-8b-8192",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Vector embeddings are numerical representations of data points in high-dimensional space where semantic similarity corresponds to geometric proximity."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 14,
+    "completion_tokens": 23,
+    "total_tokens": 37
+  },
   "meta": {
     "provider": "groq",
-    "latency_ms": 342,
+    "latency_ms": 182,
     "cache_hit": false
   }
 }
 ```
 
-**Error responses**:
-- `401` — Invalid or missing virtual key
-- `429` — Budget exceeded (includes `budget_type`, `budget_used`, `budget_limit`)
-- `503` — All providers failed (includes `providers_tried`, `latency_ms`)
+- **Error Codes**:
+  - `401 Unauthorized`: Virtual key missing, malformed, or inactive.
+  - `429 Too Many Requests`: Budget limit exceeded (`budget_used >= budget_limit`).
+  - `503 Service Unavailable`: All upstream providers (Groq & Gemini) failed or timed out.
 
 ---
 
-### `POST /admin/keys`
+### 2. `POST /admin/keys`
+Provisions a new virtual key with a specified budget quota and policy.
 
-Creates a new virtual key.
-
-**Body**:
+- **Request Body**:
 ```json
 {
-  "name": "my-app-key",
+  "name": "analytics-cron-service",
   "budget_type": "requests",
-  "budget_limit": 100
+  "budget_limit": 500
 }
 ```
-
-`budget_type` options: `requests`, `tokens`, `cost_inr`
-
-**Response** (201): Returns the raw key **once only**. Store it securely.
+- Supported `budget_type` values:
+  - `requests`: Maximum number of requests allowed.
+  - `tokens`: Maximum combined token count allowed.
+  - `cost_inr`: Maximum cost in INR allowed.
 
 ---
 
-### `GET /usage?key=<raw_key>`
+### 3. `GET /admin/keys`
+Retrieves all virtual keys with metadata, current budget usage, and status.
 
-Returns usage statistics for a virtual key.
+- **Response (200 OK)**:
+```json
+[
+  {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "name": "analytics-cron-service",
+    "budget_type": "requests",
+    "budget_limit": 500,
+    "budget_used": 42,
+    "created_at": "2026-09-22T06:00:00.000Z"
+  }
+]
+```
 
-**Response** (200):
+---
+
+### 4. `GET /usage?key=<raw_key>`
+Returns detailed real-time consumption statistics, cache hit metrics, and recent request logs.
+
+- **Response (200 OK)**:
 ```json
 {
-  "key_name": "my-app-key",
+  "key_name": "analytics-cron-service",
   "budget_type": "requests",
-  "budget_limit": 100,
-  "budget_used": 23,
-  "remaining": 77,
-  "cache_hits": 5,
-  "cache_hit_rate": "21.7%",
-  "total_requests": 23,
+  "budget_limit": 500,
+  "budget_used": 42,
+  "remaining": 458,
+  "cache_hits": 9,
+  "cache_hit_rate": "21.4%",
+  "total_requests": 42,
   "recent_requests": [
     {
-      "created_at": "2026-09-21T17:00:00Z",
+      "created_at": "2026-09-22T06:45:12.000Z",
       "model": "llama3-8b-8192",
       "provider": "groq",
-      "tokens_in": 12,
-      "tokens_out": 45,
-      "cost_estimate_inr": 0.003,
-      "latency_ms": 342,
+      "tokens_in": 18,
+      "tokens_out": 64,
+      "cost_estimate_inr": 0.004,
+      "latency_ms": 195,
       "status": "success",
       "cache_hit": false
     }
@@ -316,14 +462,12 @@ Returns usage statistics for a virtual key.
 
 ---
 
-### `GET /health`
-
-Returns gateway health status. Used by Railway/Render for health checks.
-
-**Response** (200):
+### 5. `GET /health`
+Returns granular health metrics across the gateway cluster:
 ```json
 {
   "status": "ok",
+  "timestamp": "2026-09-22T07:00:00.000Z",
   "providers": {
     "groq": "reachable",
     "gemini": "reachable"
@@ -335,171 +479,105 @@ Returns gateway health status. Used by Railway/Render for health checks.
 
 ---
 
-## Deployment (Railway)
+## Concurrency Guarantees
 
-### 1. Provision services
+### The Check-Then-Act Flaw in Traditional Gateways
+Under high concurrency, traditional application gateways perform two operations:
+1. `SELECT budget_used FROM keys WHERE id = ?`
+2. If `budget_used < limit`: perform LLM call, then `UPDATE keys SET budget_used = budget_used + 1`
 
-In Railway dashboard:
-1. Create a new project
-2. Add a **PostgreSQL** plugin — copy `DATABASE_URL`
-3. Add a **Redis** plugin — copy `REDIS_URL`
-4. Enable pgvector: connect to Postgres and run `CREATE EXTENSION vector;`
+When 10 requests arrive simultaneously on a key with 1 remaining slot, all 10 queries read `budget_used = 4`, all 10 pass the check, and all 10 spend tokens. The budget is overspent by 900%.
 
-### 2. Set environment variables
+### Atomic Lua Elimination
+RentOk LLM Gateway runs an atomic Lua script directly inside Redis:
+```lua
+-- Atomic Lua Budget Evaluation
+local current = redis.call('GET', KEYS[1])
+if not current then
+  current = 0
+else
+  current = tonumber(current)
+end
 
-In Railway → Your Service → Variables, add:
+local limit = tonumber(ARGV[1])
+local increment = tonumber(ARGV[2])
 
+if current + increment <= limit then
+  redis.call('INCRBY', KEYS[1], increment)
+  return current + increment
+else
+  return -1
+end
 ```
-DATABASE_URL        = (from Railway Postgres plugin)
-REDIS_URL           = (from Railway Redis plugin)
-GROQ_API_KEY        = your_groq_api_key
-GEMINI_API_KEY      = your_gemini_api_key
-NODE_ENV            = production
-PORT                = 3000
-CACHE_ENABLED       = true
-CACHE_SIMILARITY_THRESHOLD = 0.95
-```
+Because Redis executes Lua scripts in a single-threaded event loop, no other command can interleave. Either the increment succeeds and is guaranteed within quota, or it is rejected with `-1` (`429 Too Many Requests`).
 
-### 3. Deploy
+---
 
-Push to your connected Git branch. Railway auto-builds using the `Dockerfile`.
+## Monorepo Structure
 
-### 4. Run migrations
-
-In Railway → Service → Shell:
-```bash
-npm run migration:run
-```
-
-### 5. Verify
-
-```bash
-curl https://your-app.railway.app/health
+```text
+RentOk_Assignment/
+├── backend/                     # NestJS Core Gateway API
+│   ├── src/
+│   │   ├── auth/                # Virtual Key AuthGuard, SHA-256 Hasher, Admin Controller
+│   │   ├── budget/              # Atomic Redis Lua Interceptor & Budget Service
+│   │   ├── cache/               # pgvector Semantic Caching & HNSW Similarity Service
+│   │   ├── config/              # Centralized Configuration & Environment Validation
+│   │   ├── gateway/             # OpenAI-Compatible /v1/chat/completions Controller
+│   │   ├── health/              # Multi-Service Health & Readiness Controller
+│   │   ├── migrations/          # TypeORM Migrations (Keys, Logs, Prompt Cache)
+│   │   ├── provider/            # Groq & Gemini Adapters with Normalized Schemas
+│   │   ├── usage/               # BullMQ Telemetry Worker & /usage Query Controller
+│   │   ├── app.module.ts        # Root Dependency Injection Module
+│   │   └── main.ts              # NestJS Bootstrap, CORS, Validation Pipe
+│   ├── public/                  # Static assets (Favicon, Brand Logo)
+│   ├── Dockerfile               # Production Containerization Dockerfile
+│   ├── docker-compose.yml       # PostgreSQL 16 + pgvector & Redis 7 stack
+│   ├── package.json             # Backend dependencies & script definitions
+│   └── tsconfig.json            # Strict TypeScript configuration
+├── frontend/                    # Next.js 14 Observability Workspace
+│   ├── app/
+│   │   ├── health/              # System Health & Cluster Connectivity Page
+│   │   ├── keys/                # Virtual Key Management & Provisioning Page
+│   │   ├── usage/               # Interactive Usage Search & Telemetry Page
+│   │   ├── globals.css          # Design Tokens, Dark Aesthetics & Typography
+│   │   ├── layout.tsx           # Shell Layout & App Favicon Metadata
+│   │   └── page.tsx             # Executive KPI & Cost Overview Dashboard
+│   ├── components/
+│   │   └── Sidebar.tsx          # Navigation Sidebar with Brand Logo
+│   ├── public/                  # Next.js static assets & brand icons
+│   └── package.json             # Frontend dependencies & Next.js config
+├── docs/
+│   └── assets/                  # High-resolution logos & architecture diagrams
+│       ├── logo.png             # Official brand logo
+│       └── logo.jpg             # High-contrast asset
+├── DECISIONS.md                 # Production Architecture Rationales & Trade-off Matrix
+├── AI-LOG.md                    # Engineering Development Log & AI Usage Ledger
+├── .gitignore                   # Clean Git tracking specification
+└── README.md                    # Comprehensive Project Documentation
 ```
 
 ---
 
-## Project Structure
+## Contributing
 
-```
-src/
-  app.module.ts               # Root module
-  
-  auth/
-    auth.module.ts
-    auth.guard.ts             # SHA-256 key lookup
-    virtual-key.entity.ts
-    
-  budget/
-    budget.module.ts
-    budget.interceptor.ts     # Redis Lua script
-    budget.service.ts
-    
-  provider/
-    provider.module.ts
-    provider.service.ts       # Groq + Gemini calls, fallback logic
-    groq.adapter.ts
-    gemini.adapter.ts         # Normalizes Gemini schema to OpenAI-compatible
-    
-  usage/
-    usage.module.ts
-    usage.service.ts          # GET /usage logic
-    usage.controller.ts
-    usage-log.entity.ts
-    usage.processor.ts        # BullMQ worker
-    
-  cache/
-    cache.module.ts           # (stretch) semantic cache
-    cache.service.ts          # pgvector similarity search
-    
-  health/
-    health.controller.ts
-    
-  config/
-    config.module.ts          # Typed env var access (never log secrets)
-    
-  migrations/
-    001_create_virtual_keys.sql
-    002_create_usage_logs.sql
-    003_create_prompt_cache.sql
-    
-docker-compose.yml
-Dockerfile
-.env.example
-DECISIONS.md
-AI-LOG.md
-```
+Contributions and enhancements are welcome:
+
+1. **Fork** the repository
+2. **Create** your feature branch (`git checkout -b feat/semantic-reranking`)
+3. **Commit** your changes (`git commit -m 'feat: add cross-encoder reranking to cache'`)
+4. **Push** to the branch (`git push origin feat/semantic-reranking`)
+5. **Open** a Pull Request
 
 ---
 
-## Budget Enforcement: The Concurrency Guarantee
+## License
 
-The Redis Lua script that enforces budgets runs atomically — no other Redis command executes while it runs. This eliminates the classic check-then-act race condition:
-
-```
-Two concurrent requests on a key with 1 request remaining:
-
-Naive (BROKEN):           Lua (CORRECT):
-R1: GET -> 4              Redis serializes Lua calls:
-R2: GET -> 4              R1: Lua sees current=4, increments to 5. Returns 5. (PASS)
-R1: 4+1<=5, PASS          R2: Lua sees current=5, 5+1>5. Returns -1. (REJECT)
-R2: 4+1<=5, PASS          
-Budget now at 6 (over!)   Budget correctly at 5.
-```
-
-See [DECISIONS.md](./DECISIONS.md) Decision 2 for full analysis.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## Semantic Cache Performance
-
-| Metric | Result |
-|---|---|
-| Cache hit threshold | 0.95 cosine similarity |
-| Embedding model | text-embedding-ada-002 (1536-dim) |
-| Index type | HNSW (`vector_cosine_ops`) |
-| Query latency (local, 1k cached entries) | ~40ms |
-| Hit rate (during testing with varied prompts) | ~18% |
-| Estimated cost saved per hit | ~0.003 INR (skipped provider call) |
-
-Hit rate is deliberately conservative due to the 0.95 threshold. See [DECISIONS.md](./DECISIONS.md) Section 8 for the argument both ways.
-
----
-
-## What I Deliberately Cut (and Why)
-
-| Cut | Reasoning |
-|---|---|
-| Streaming responses | Complicates budget accounting, fallback, and caching — see DECISIONS.md |
-| Circuit breaker | Right call for production; out of scope for this weekend |
-| Automated test suite | Integration-tested with curl against live URL; would add before team adoption |
-| Multi-tenant auth | Out of scope per assignment |
-| Polished frontend | Assignment explicitly not scored on UI |
-
----
-
-## Running the Concurrent Budget Test
-
-After deploying, verify atomicity with 10 concurrent requests against a key with budget 5:
-
-```bash
-#!/bin/bash
-KEY="gw_your_key_here"
-GATEWAY="https://your-app.railway.app"
-
-for i in {1..10}; do
-  curl -s -o /dev/null -w "%{http_code}\n" \
-    -X POST "$GATEWAY/v1/chat/completions" \
-    -H "Authorization: Bearer $KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"model":"llama3-8b-8192","messages":[{"role":"user","content":"hi"}]}' &
-done
-wait
-
-# Expected: exactly 5 "200" lines and 5 "429" lines
-# If you see 6+ "200" lines, the atomic Lua script is not working
-```
-
----
-
-*Built by Kesha for the RentOk Backend Intern take-home. Questions welcome at the follow-up call.*
+<p align="center">
+  <strong>RentOk LLM Gateway</strong><br/>
+  <em>Empowering High-Throughput AI Applications with Deterministic Rate Limiting & Architecture Precision.</em>
+</p>

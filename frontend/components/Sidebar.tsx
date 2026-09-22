@@ -69,10 +69,8 @@ export default function Sidebar() {
     <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M2 7L7 2L12 7L7 12L2 7Z" fill="currentColor"/>
-          </svg>
+        <div className="sidebar-logo-icon" style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <img src="/eazypgofficial_logo.jpg" alt="RentOk Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
         <div className="sidebar-logo-text">
           <span className="sidebar-logo-title">RentOk Gateway</span>
