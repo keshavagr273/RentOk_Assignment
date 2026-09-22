@@ -2,9 +2,6 @@
 
 import { useState, useEffect } from 'react'
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000'
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN || 'adm_rentok_secret_token_2026'
-
 type VirtualKey = {
   id: string
   name: string
@@ -75,13 +72,9 @@ export default function KeysPage() {
   const [copied, setCopied] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
-  // Load keys from real API, fallback to mock data if gateway isn't running
+  // Load keys via server-side API proxy (ADMIN_TOKEN stays private on server)
   useEffect(() => {
-    fetch(`${GATEWAY}/admin/keys`, {
-      headers: {
-        'Authorization': `Bearer ${ADMIN_TOKEN}`,
-      },
-    })
+    fetch('/api/admin/keys')
       .then(r => r.json())
       .then(data => setKeys(Array.isArray(data) ? data : MOCK_KEYS))
       .catch(() => setKeys(MOCK_KEYS))
@@ -96,11 +89,10 @@ export default function KeysPage() {
     setCreating(true)
     setFormError(null)
     try {
-      const res = await fetch(`${GATEWAY}/admin/keys`, {
+      const res = await fetch('/api/admin/keys', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ADMIN_TOKEN}`,
         },
         body: JSON.stringify({ name: form.name, budget_type: form.budget_type, budget_limit: Number(form.budget_limit) }),
       })

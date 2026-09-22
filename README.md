@@ -335,9 +335,8 @@ All gateway settings are environment-driven and verified at bootstrap:
 | `CACHE_SIMILARITY_THRESHOLD` | `0.95` | Cosine similarity threshold for semantic cache hits |
 | `CACHE_CHARGE_ON_HIT` | `false` | Whether cache hits consume user request/token budget |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model for semantic cache vectors (must produce 1536-dim output; `text-embedding-ada-002` also compatible) |
-| `ADMIN_TOKEN` | `adm_rentok_secret_token_2026` | Static bearer token required for `/admin/keys` (GET/POST) |
+| `ADMIN_TOKEN` | `adm_rentok_secret_token_2026` | Static bearer token required for `/admin/keys` (server-side only; proxied by Next.js route handler so it is never exposed to the browser) |
 | `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:3000` | Backend API URL used by the Next.js frontend |
-| `NEXT_PUBLIC_ADMIN_TOKEN` | `adm_rentok_secret_token_2026` | Admin token passed by the Next.js frontend to manage keys |
 
 ---
 
