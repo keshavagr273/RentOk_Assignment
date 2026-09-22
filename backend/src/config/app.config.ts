@@ -23,8 +23,8 @@ export default registerAs('app', () => ({
     groqApiKey: process.env.GROQ_API_KEY ?? '',
     geminiApiKey: process.env.GEMINI_API_KEY ?? '',
     timeoutMs: parseInt(process.env.PROVIDER_TIMEOUT_MS ?? '8000', 10),
-    groqDefaultModel: process.env.GROQ_DEFAULT_MODEL ?? 'llama3-8b-8192',
-    geminiDefaultModel: process.env.GEMINI_DEFAULT_MODEL ?? 'gemini-1.5-flash',
+    groqDefaultModel: process.env.GROQ_DEFAULT_MODEL ?? 'qwen/qwen3.8-27b',
+    geminiDefaultModel: process.env.GEMINI_DEFAULT_MODEL ?? 'gemini-2.5-flash',
   },
 
   cache: {

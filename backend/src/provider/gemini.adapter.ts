@@ -157,12 +157,14 @@ export class GeminiAdapter {
    */
   private mapModel(model: string): string {
     const mapping: Record<string, string> = {
-      'llama3-8b-8192':  'gemini-1.5-flash',
-      'llama3-70b-8192': 'gemini-1.5-pro',
-      'mixtral-8x7b-32768': 'gemini-1.5-flash',
-      'gpt-4':           'gemini-1.5-pro',
-      'gpt-3.5-turbo':   'gemini-1.5-flash',
+      'qwen/qwen3.8-27b': 'gemini-2.5-flash',
+      'openai/gpt-oss-20b': 'gemini-2.5-flash',
+      'llama3-8b-8192':  'gemini-2.5-flash',
+      'llama3-70b-8192': 'gemini-2.5-pro',
+      'mixtral-8x7b-32768': 'gemini-2.5-flash',
+      'gpt-4':           'gemini-2.5-pro',
+      'gpt-3.5-turbo':   'gemini-2.5-flash',
     };
-    return mapping[model] ?? this.config.get<string>('app.providers.geminiDefaultModel') ?? 'gemini-1.5-flash';
+    return mapping[model] ?? this.config.get<string>('app.providers.geminiDefaultModel') ?? 'gemini-2.5-flash';
   }
 }

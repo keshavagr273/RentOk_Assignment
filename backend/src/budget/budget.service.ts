@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-import { REDIS_CLIENT } from './budget.module';
+import { REDIS_CLIENT } from './budget.constants';
 
 /**
  * Budget enforcement service.

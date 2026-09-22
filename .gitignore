@@ -4,6 +4,7 @@
 .env
 .env.local
 .env.*.local
+.neon
 
 # macOS / Windows noise
 .DS_Store

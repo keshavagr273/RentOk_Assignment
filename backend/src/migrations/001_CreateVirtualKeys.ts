@@ -9,8 +9,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   - budget_used: mirrors Redis counter; Redis is the enforcement gate,
  *     Postgres is the durable audit record.
  */
-export class CreateVirtualKeys1001 implements MigrationInterface {
-  name = 'CreateVirtualKeys1001';
+export class CreateVirtualKeys1727000000001 implements MigrationInterface {
+  name = 'CreateVirtualKeys1727000000001';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`

@@ -94,7 +94,7 @@ export class ProviderService {
     try {
       const start = Date.now();
       await this.groq.complete(
-        { model: 'llama3-8b-8192', messages: [{ role: 'user', content: 'Hi' }] },
+        { model: 'qwen/qwen3.8-27b', messages: [{ role: 'user', content: 'Hi' }] },
         3000,
       );
       return Date.now() - start;
@@ -107,7 +107,7 @@ export class ProviderService {
     try {
       const start = Date.now();
       await this.gemini.complete(
-        { model: 'gemini-1.5-flash', messages: [{ role: 'user', content: 'Hi' }] },
+        { model: 'gemini-2.5-flash', messages: [{ role: 'user', content: 'Hi' }] },
         3000,
       );
       return Date.now() - start;

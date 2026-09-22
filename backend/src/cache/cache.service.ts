@@ -186,23 +186,36 @@ export class SemanticCacheService implements OnModuleInit {
     const apiKey = this.config.get<string>('app.cache.embeddingApiKey');
     const model = this.config.get<string>('app.cache.embeddingModel') ?? 'text-embedding-3-small';
 
+    const requestBody: Record<string, any> = { model, input: text };
+
     const response = await fetch(`${baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ model, input: text }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`Embedding API error ${response.status}: ${body.slice(0, 100)}`);
+      throw new Error(`Embedding API error ${response.status}: ${body.slice(0, 200)}`);
     }
 
     const data = await response.json();
+
+    // Handle both OpenAI format (data[0].embedding) and any provider variation
+    const embedding: number[] =
+      data?.data?.[0]?.embedding ??
+      data?.embeddings?.[0] ??
+      data?.embedding;
+
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error(`Unexpected embedding response shape: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+
     return {
-      embedding: data.data[0].embedding,
+      embedding,
       model: data.model ?? model,
     };
   }

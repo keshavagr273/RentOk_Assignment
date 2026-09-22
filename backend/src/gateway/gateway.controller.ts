@@ -43,11 +43,14 @@ class ChatCompletionDto {
 
 // Cost rates in USD per 1M tokens (input, output)
 const COST_RATES: Record<string, [number, number]> = {
-  'llama3-8b-8192':    [0.05,  0.08],
-  'llama3-70b-8192':   [0.59,  0.79],
-  'mixtral-8x7b-32768':[0.24,  0.24],
-  'gemini-1.5-flash':  [0.075, 0.30],
-  'gemini-1.5-pro':    [3.50,  10.50],
+  'qwen/qwen3.8-27b':    [0.05,  0.08],
+  'openai/gpt-oss-20b':  [0.05,  0.08],
+  'llama3-8b-8192':      [0.05,  0.08],
+  'llama3-70b-8192':     [0.59,  0.79],
+  'mixtral-8x7b-32768':  [0.24,  0.24],
+  'gemini-2.5-flash':    [0.075, 0.30],
+  'gemini-1.5-flash':    [0.075, 0.30],
+  'gemini-1.5-pro':      [3.50,  10.50],
 };
 
 function estimateCostInr(
@@ -101,7 +104,7 @@ export class GatewayController {
     }
 
     const virtualKey: VirtualKey = req.virtualKey;
-    const model = body.model ?? 'llama3-8b-8192';
+    const model = body.model ?? process.env.GROQ_DEFAULT_MODEL ?? 'qwen/qwen3.8-27b';
     const startTime = Date.now();
     const usdToInr = parseFloat(process.env.USD_TO_INR ?? '84');
 

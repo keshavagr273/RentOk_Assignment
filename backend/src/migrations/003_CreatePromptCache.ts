@@ -17,8 +17,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * The `vector` extension must be available. The pgvector/pgvector Docker image
  * (used in docker-compose.yml) provides this automatically.
  */
-export class CreatePromptCache1003 implements MigrationInterface {
-  name = 'CreatePromptCache1003';
+export class CreatePromptCache1727000000003 implements MigrationInterface {
+  name = 'CreatePromptCache1727000000003';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     // Enable pgvector extension — idempotent

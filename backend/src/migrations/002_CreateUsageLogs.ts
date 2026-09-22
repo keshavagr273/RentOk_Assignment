@@ -10,8 +10,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   - key_id: for fast per-key usage queries (GET /usage)
  *   - created_at: for time-range queries (dashboard, analytics)
  */
-export class CreateUsageLogs1002 implements MigrationInterface {
-  name = 'CreateUsageLogs1002';
+export class CreateUsageLogs1727000000002 implements MigrationInterface {
+  name = 'CreateUsageLogs1727000000002';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
