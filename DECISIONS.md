@@ -27,7 +27,9 @@ Client
 |      -> 401 if not found                                     |
 |                                                              |
 |  [2] BudgetInterceptor  (Redis Lua script, atomic)           |
-|      GET + INCRBY in one round trip -> 429 if over limit     |
+|      'requests': Lua check+increment -> 429 if over limit    |
+|      'tokens'/'cost_inr': read-only pre-check (documented    |
+|       tradeoff — atomic enforcement only for 'requests')     |
 |                                                              |
 |  [3] SemanticCacheService  (stretch goal)                    |
 |      embed prompt -> pgvector cosine search                  |
@@ -53,10 +55,12 @@ Client
 **Tracing one request end-to-end:**
 
 1. Client sends `POST /v1/chat/completions` with `Authorization: Bearer gw_<raw_key>` and an OpenAI-compatible body `{ model, messages }`.
-2. **AuthGuard** computes `sha256(raw_key)`, queries `virtual_keys` by `key_hash`. If no row: `401 Unauthorized`. Auth result (key_id, budget_type, budget_limit) is attached to the request object for downstream use.
-3. **BudgetInterceptor** runs the Redis Lua script — a single atomic round trip that checks `current_usage + increment <= budget_limit`, then increments if safe. Over budget: `429 Budget Exceeded` with a JSON body before a single token is spent.
+2. **AuthGuard** computes `sha256(raw_key)`, queries `virtual_keys` by `key_hash`. If no row: `401 Unauthorized`. The full `VirtualKey` entity (id, budgetType, budgetLimit) is attached to the request object for downstream use.
+3. **BudgetInterceptor** branches on budget type:
+   - `requests`: runs the Redis Lua script — a single atomic round trip that checks and increments. Over budget: `429 Budget Exceeded` before any token is spent.
+   - `tokens`/`cost_inr`: non-atomic read-check only. Actual increment happens in the BullMQ worker post-call (since tokens are only known after the provider responds).
 4. *(Stretch)* **SemanticCacheService** embeds the normalized prompt text, queries `prompt_cache` by cosine distance. If the nearest-neighbor similarity >= 0.95: return the cached `response_text`, log `cache_hit=true`, increment `hit_count`, skip steps 5–6 entirely.
-5. **ProviderService** forwards the request to Groq with an 8-second timeout. On timeout or 5xx: one retry. On second failure: switches to Gemini. On total failure: `503` with `{ error, status: "error", provider_tried: [...] }`.
+5. **ProviderService** forwards the request to Groq with an 8-second timeout. On timeout or 5xx: one retry. On second failure: switches to Gemini. On total failure: `503` with `{ error: "all_providers_failed", providers_tried: [...], error_details: [...] }`.
 6. Successful provider response assembled into a normalized response object.
 7. `200` returned to client immediately.
 8. **After** `res.send()` returns, a BullMQ job is enqueued (non-blocking). The BullMQ worker picks it up asynchronously and writes to `usage_logs`. The client is never waiting on this write.
@@ -99,10 +103,13 @@ end
 
 **Why it beats the alternatives**: Redis is single-threaded — a Lua script executes atomically with no interleaving from other commands. Two concurrent requests on key `gw_abc` with remaining budget of 1 token: both hit the script simultaneously, Redis serializes them. The first increments to the limit; the second sees `current + incr > limit` and returns `-1`. The naive `GET-then-SET` approach in application code loses this guarantee — a check-then-increment race is trivially reproducible under load.
 
+**Honest scope of the atomicity guarantee**: The Lua script is only used for `requests` budgets. For `tokens` and `cost_inr` budgets, the interceptor does a read-only check (non-atomic), because the actual token count is only known after the provider responds. This is a documented tradeoff — the atomic gate only prevents the worst overconsumption on request-count budgets.
+
 **Tradeoff knowingly accepted**: Redis is now a **second source of truth** for budget_used, separate from the Postgres `virtual_keys.budget_used` column. I mitigate drift with:
 - Postgres `budget_used` is the durable/audit source; Redis is the fast gate.
-- On key creation, the Redis counter is seeded from Postgres to survive restarts.
-- A nightly reconciliation job (described in "What I'd do with one more week") would sync them.
+- On key creation, the Redis counter is seeded to 0 immediately (via `redis.set`).
+- The BullMQ worker updates both Redis and Postgres after each successful call.
+- A Redis restart resets counters to 0 (documented failure mode in Section 9).
 
 **Why not Postgres `SELECT ... FOR UPDATE`?** It works correctly, but it serializes all concurrent requests on the same key at the DB row level. Under bursty traffic, that is a meaningful latency spike. Redis Lua scales better without locks.
 
@@ -115,7 +122,7 @@ end
 - Fire-and-forget `process.nextTick()` (no durability guarantee)
 - BullMQ job enqueued post-response, consumed by a worker
 
-**What I picked**: BullMQ post-response enqueue. The client never waits on the write.
+**What I picked**: BullMQ post-response enqueue. The `queue.add()` call is a Redis LPUSH — completes in microseconds and is not awaited. The client never waits on this write.
 
 **Specific context from DocSaarthi**: I ran a 14-stage async pipeline on BullMQ in production — file ingestion -> OCR -> chunking -> embedding -> indexing. I hit real backpressure questions (what happens if the worker pool is exhausted?), ordering constraints, and retry semantics. BullMQ's built-in retry-with-backoff meant I didn't have to implement exponential retry in worker code. That experience is directly applicable here.
 
@@ -144,7 +151,11 @@ Non-streaming keeps the entire request lifecycle synchronous and reason-about-ab
 
 **Why semantic caching**: I already run pgvector + HNSW indexing in DocSaarthi at sub-120ms with cosine similarity search over 1536-dimensional embeddings. The infrastructure cost of adding this stretch is almost zero — I'm reusing a pattern I've already debugged in production. The other stretches (Ollama, router) would have required new debugging time I didn't have.
 
-**What changed vs. DocSaarthi**: In DocSaarthi the vector search is on document chunks (semantic retrieval). Here it's on full prompt text (semantic deduplication). The query is the same structure, but the intent is different: I want near-duplicate prompts to hit cache, not just topically related content. The higher threshold (0.95 vs. DocSaarthi's 0.75) reflects that.
+**Implementation detail**: Only the last user message in the conversation is embedded, not the full message array. Embedding conversation history adds noise and makes the cache too specific to match rephrasings of the same underlying question.
+
+**Cache graceful degradation**: If `EMBEDDING_API_KEY` is not configured, the cache silently disables itself on startup with a warning log. Cache lookup or storage errors are swallowed and logged — they must never fail the primary LLM request.
+
+**What changed vs. DocSaarthi**: In DocSaarthi the vector search is on document chunks (semantic retrieval). Here it's on the last user message (semantic deduplication). The query is the same pgvector HNSW structure, but the intent is different: I want near-duplicate prompts to hit cache, not just topically related content. The higher threshold (0.95 vs. DocSaarthi's 0.75) reflects that.
 
 ---
 
@@ -182,7 +193,9 @@ The classic failure mode: key has 1 request remaining. Two requests arrive 2ms a
 - **One retry on primary**: most provider timeouts are transient (network blip, overloaded edge). A single retry catches ~80% of them cheaply without switching providers.
 - **Provider switch, not endless retries**: after two primary failures in a row, it's a real outage. Gemini is structurally different infrastructure, so it's unlikely to have the same failure.
 - **Fail fast on total failure**: an open-ended retry loop that keeps a caller waiting 30+ seconds is worse than a clear 503 at second 10. The caller can show a UI error and retry; they can't "un-hang" from a stuck request.
-- **Structured error body**: `{ error: "all_providers_failed", providers_tried: ["groq", "gemini"], latency_ms: 9847 }` — the caller knows what was tried.
+- **Structured error body**: `{ error: "all_providers_failed", providers_tried: ["groq", "gemini"], error_details: [{provider, reason}, ...] }` — the caller knows what was tried and why each failed.
+
+**Gemini schema normalization**: Gemini's request/response schema differs entirely from OpenAI's. The `GeminiAdapter` handles both directions: maps `assistant` role to `model`, lifts `system` messages into `systemInstruction`, normalizes `candidates[0].content.parts[0].text` to `choices[0].message.content`, and maps `usageMetadata.*TokenCount` to `usage.prompt_tokens/completion_tokens`. Edge cases handled: empty candidates (safety filter triggers), missing usageMetadata (error responses).
 
 **What I deliberately didn't build**: a **circuit breaker** that "remembers" a provider is down for N minutes. That's the right thing for production; it requires persistent state + background health polling + half-open recovery logic. Out of scope for this weekend; I'd add it before going live.
 
@@ -196,8 +209,9 @@ The classic failure mode: key has 1 request remaining. Two requests arrive 2ms a
 | Multi-tenant auth | Out of scope per the assignment explicitly; requires row-level security and key namespacing |
 | Circuit breaker | Right call for production; requires persistent state + background health checks. Needs another week to do well |
 | Automated tests | Made a conscious call to integration-test with curl against the deployed URL instead. Would add before any team relied on this service |
-| Polished frontend | Assignment explicitly says "spend zero weekend hours on design." A single `/usage` endpoint is sufficient and honest |
-| Client-side token counting | Used provider-reported token counts; more accurate for post-call logging at the cost of imprecise pre-call budget estimates |
+| Live provider pings in /health | The `/health` endpoint checks Redis and Postgres but reports provider key configuration status (`configured`/`unconfigured`), not live reachability. Pinging providers on every health check is expensive; failures surface in `usage_logs` instead |
+| Admin endpoint auth | `POST /admin/keys` is currently unprotected (acceptable for assignment scope). In production it would require a separate admin key or session |
+| Client-side token counting | Used provider-reported token counts; more accurate for post-call logging at the cost of imprecise pre-call budget estimates for `tokens` type budgets |
 
 ---
 
@@ -224,19 +238,21 @@ The classic failure mode: key has 1 request remaining. Two requests arrive 2ms a
 
 | Scenario | Current behavior | Fix with more time |
 |---|---|---|
-| Redis restart | Budget counters reset; keys appear to have full budget | Seed Redis from Postgres on startup; add `appendonly yes` |
-| BullMQ worker crash mid-job | Usage log row lost until worker restarts | Outbox pattern: write to `pending_logs` Postgres table first |
-| pgvector index too large | Query time degrades past 120ms at scale | Partition `prompt_cache` by model; tune `ef_search` |
-| Gemini schema edge cases | Response normalization may miss fields | Add comprehensive schema normalization tests with provider fixtures |
-| Provider key compromise | All virtual keys exposed if env var leaks | Rotate to short-lived keys via Vault |
+| Redis restart | Budget counters reset to 0; keys appear to have full budget again | Seed Redis from Postgres `budget_used` on startup; enable `appendonly yes` |
+| BullMQ worker crash mid-job | Usage log row lost after 3 exponential-backoff retries | Outbox pattern: write to `pending_logs` Postgres table in same transaction first |
+| pgvector index too large | HNSW query time degrades past ~40ms at scale (>1M vectors) | Partition `prompt_cache` by model; tune `ef_search` via `SET LOCAL` |
+| Gemini edge cases | Adapter handles empty candidates + missing usageMetadata; other edge cases may exist | Comprehensive tests with recorded Gemini response fixtures |
+| Provider key compromise | All upstream access disrupted if env var leaks | Rotate to short-lived credentials via Vault or cloud secret manager |
+| tokens/cost_inr budget races | Concurrent requests can both pass a near-exhausted non-requests budget | Use Postgres `SELECT ... FOR UPDATE` or pre-call token estimation |
 
 **With one more week**:
 1. Circuit breaker with Redis TTL-based "provider down" flag
-2. Redis persistence + seed-on-start from Postgres
+2. Redis persistence + seed-on-start from Postgres `budget_used`
 3. Outbox pattern for usage_logs durability
-4. `/admin/keys/{id}/rotate` endpoint
+4. `/admin/keys/{id}/rotate` endpoint (currently a key must be deleted and recreated)
 5. Per-key per-minute rate limiting (burst abuse prevention)
 6. Threshold evaluation suite for the semantic cache
+7. Admin auth on `POST/GET /admin/keys` (currently unprotected by design for this scope)
 
 ---
 

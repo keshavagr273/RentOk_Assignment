@@ -159,13 +159,15 @@ I had to write a normalization layer (`geminiResponseToOpenAI()`) that converts 
 
 **How I got up to speed**: read the Gemini REST API reference for `generateContent`, ran a few raw curl tests against the Gemini API to see actual response structures, then wrote the normalization function. Total time: about 45 minutes. The AI helped me write the boilerplate but I read the docs myself to catch the edge cases.
 
+Note: the `EMBEDDING_MODEL` env var in `.env.example` shows `text-embedding-ada-002` as an example, but the code defaults to `text-embedding-3-small`. Either works; both produce 1536-dimensional vectors compatible with the HNSW index. I noted this discrepancy so anyone setting up the project knows to pick one and set `EMBEDDING_MODEL` explicitly.
+
 ---
 
 ## What I Prompted the AI to Do vs. What I Wrote Myself
 
 **Prompted AI to generate (then reviewed)**:
 - NestJS module/guard/interceptor boilerplate
-- Postgres migration files (schema was mine, DDL was AI-generated)
+- TypeORM migration files (TypeScript-class format — schema was mine, DDL was AI-generated from my schema spec)
 - BullMQ producer/consumer boilerplate
 - Docker Compose and Dockerfile
 - Gemini and Groq HTTP client code (initial versions)

@@ -44,7 +44,7 @@ In modern multi-tenant software ecosystems, exposing raw LLM provider credential
 
 RentOk LLM Gateway solves this with an uncompromising **Deterministic Engineering** architecture:
 
-- **Cryptographically Hashed Virtual Keys** — Callers authenticate with gateway-issued `gw_...` virtual keys. Upstream provider master secrets remain strictly isolated on the server, and only one-way SHA-256 hashes are persisted to the database.
+- **Cryptographically Hashed Virtual Keys** — Callers authenticate with gateway-issued `gw_...` virtual keys. **Security note**: The raw key is returned exactly once. Only its SHA-256 hash is stored in the database. The hash is never returned in any API response — not even in `GET /admin/keys` (which returns metadata only).
 - **Zero-Race Concurrency & Budgeting** — Budget limits (per-request, token count, or estimated INR expenditure) are evaluated and decremented atomically via a single-round-trip Redis Lua script, eliminating classic check-then-act race conditions.
 - **Sub-40ms Semantic Prompt Caching** — High-performance vector similarity search powered by PostgreSQL `pgvector` and an HNSW cosine index ($\ge 0.95$ threshold) intercepts recurring prompts, eliminating upstream LLM token costs and delivering instant responses.
 - **Resilient Multi-Provider Failover** — Transparent routing to Groq (Llama 3.3 / 8B) as the ultra-fast primary engine with an 8,000ms deadline, automatically failing over to Google Gemini 1.5 with full schema normalization before ever returning an error.
@@ -333,7 +333,7 @@ All gateway settings are environment-driven and verified at bootstrap:
 | `CACHE_ENABLED` | `true` | Enables/disables pgvector semantic caching |
 | `CACHE_SIMILARITY_THRESHOLD` | `0.95` | Cosine similarity threshold for semantic cache hits |
 | `CACHE_CHARGE_ON_HIT` | `false` | Whether cache hits consume user request/token budget |
-| `EMBEDDING_MODEL` | `text-embedding-ada-002` | Model dimension standard (1536-dim) |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model for semantic cache vectors (must produce 1536-dim output; `text-embedding-ada-002` also compatible) |
 | `NEXT_PUBLIC_GATEWAY_URL` | `http://localhost:3000` | Backend API URL used by the Next.js frontend |
 
 ---
@@ -469,13 +469,16 @@ Returns granular health metrics across the gateway cluster:
   "status": "ok",
   "timestamp": "2026-09-22T07:00:00.000Z",
   "providers": {
-    "groq": "reachable",
-    "gemini": "reachable"
+    "groq": "configured",
+    "gemini": "configured"
   },
   "redis": "connected",
-  "postgres": "connected"
+  "postgres": "connected",
+  "cache_enabled": true
 }
 ```
+
+> **Note**: The health endpoint checks Redis and Postgres connectivity directly, but reports provider key *configuration status* (`configured`/`unconfigured`), not live provider reachability. Live provider failures surface in `usage_logs` rather than on this endpoint.
 
 ---
 
@@ -522,10 +525,10 @@ RentOk_Assignment/
 │   │   ├── auth/                # Virtual Key AuthGuard, SHA-256 Hasher, Admin Controller
 │   │   ├── budget/              # Atomic Redis Lua Interceptor & Budget Service
 │   │   ├── cache/               # pgvector Semantic Caching & HNSW Similarity Service
-│   │   ├── config/              # Centralized Configuration & Environment Validation
+│   │   ├── config/              # Centralized Configuration (app.config.ts)
 │   │   ├── gateway/             # OpenAI-Compatible /v1/chat/completions Controller
 │   │   ├── health/              # Multi-Service Health & Readiness Controller
-│   │   ├── migrations/          # TypeORM Migrations (Keys, Logs, Prompt Cache)
+│   │   ├── migrations/          # TypeORM TypeScript Migrations (001, 002, 003)
 │   │   ├── provider/            # Groq & Gemini Adapters with Normalized Schemas
 │   │   ├── usage/               # BullMQ Telemetry Worker & /usage Query Controller
 │   │   ├── app.module.ts        # Root Dependency Injection Module
