@@ -26,8 +26,14 @@ export class AdminGuard implements CanActivate {
 
     const expectedToken =
       this.configService.get<string>('app.adminToken') ||
-      process.env.ADMIN_TOKEN ||
-      'adm_rentok_secret_token_2026';
+      process.env.ADMIN_TOKEN;
+
+    if (!expectedToken) {
+      throw new UnauthorizedException({
+        error: 'admin_auth_not_configured',
+        message: 'ADMIN_TOKEN is not configured on the server',
+      });
+    }
 
     const authHeader: string = request.headers['authorization'] ?? '';
     let providedToken = '';

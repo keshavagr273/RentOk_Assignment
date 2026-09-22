@@ -6,8 +6,7 @@ const GATEWAY =
   'http://localhost:3000'
 
 // Server-side secret — NEVER exposed to the browser
-const ADMIN_TOKEN =
-  process.env.ADMIN_TOKEN || 'adm_rentok_secret_token_2026'
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''
 
 export async function GET() {
   try {

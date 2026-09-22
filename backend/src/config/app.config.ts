@@ -42,5 +42,5 @@ export default registerAs('app', () => ({
     usdToInr: parseFloat(process.env.USD_TO_INR ?? '84'),
   },
 
-  adminToken: process.env.ADMIN_TOKEN ?? 'adm_rentok_secret_token_2026',
+  adminToken: process.env.ADMIN_TOKEN ?? '',
 }));
