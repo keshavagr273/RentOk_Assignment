@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000'
 
@@ -68,16 +68,17 @@ export default function UsagePage() {
   const [data, setData] = useState<UsageData | null>(null)
   const [searched, setSearched] = useState(false)
 
-  const lookup = useCallback(async () => {
-    if (!key.trim()) return
+  const lookup = useCallback(async (targetKey?: string) => {
+    const keyToSearch = (targetKey ?? key).trim()
+    if (!keyToSearch) return
     setLoading(true)
     setError(null)
     setSearched(true)
 
     try {
-      const res = await fetch(`${GATEWAY}/usage?key=${encodeURIComponent(key.trim())}`)
+      const res = await fetch(`${GATEWAY}/usage?key=${encodeURIComponent(keyToSearch)}`)
       if (res.status === 404) {
-        setError('Key not found. Check that you entered the correct virtual key.')
+        setError('Key not found. Check that you entered the correct virtual key or ID.')
         setData(null)
       } else if (!res.ok) {
         setError(`Gateway error (${res.status}): ${res.statusText}`)
@@ -94,6 +95,17 @@ export default function UsagePage() {
       setLoading(false)
     }
   }, [key])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const q = params.get('key') || params.get('id')
+      if (q) {
+        setKey(q)
+        lookup(q)
+      }
+    }
+  }, [lookup])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') lookup()
@@ -133,7 +145,7 @@ export default function UsagePage() {
             </div>
             <button
               className="btn btn-primary"
-              onClick={lookup}
+              onClick={() => lookup()}
               disabled={loading || !key.trim()}
               style={{ height: '38px' }}
             >

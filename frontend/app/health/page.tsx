@@ -29,20 +29,20 @@ const PROVIDER_META: Record<string, { label: string; endpoint: string; model: st
   groq: {
     label: 'Groq',
     endpoint: 'api.groq.com/openai/v1',
-    model: 'llama3-8b-8192',
+    model: 'qwen/qwen3.8-27b',
     role: 'Primary',
   },
   gemini: {
     label: 'Google Gemini',
     endpoint: 'generativelanguage.googleapis.com',
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.5-flash',
     role: 'Fallback',
   },
 }
 
 function ProviderCard({ name, status, latency }: { name: string; status: string; latency?: number }) {
   const meta = PROVIDER_META[name] ?? { label: name, endpoint: '—', model: '—', role: '—' }
-  const isOk = status === 'reachable'
+  const isOk = status === 'reachable' || status === 'configured' || status === 'operational'
   const isChecking = status === 'checking'
 
   return (
@@ -58,7 +58,7 @@ function ProviderCard({ name, status, latency }: { name: string; status: string;
           ) : (
             <span className={`badge ${isOk ? 'badge-success' : 'badge-error'}`}>
               <span className="badge-dot" />
-              {isOk ? 'Reachable' : 'Unreachable'}
+              {isOk ? 'Operational' : 'Unreachable'}
             </span>
           )}
           <span className="badge badge-neutral">{meta.role}</span>
@@ -163,7 +163,10 @@ export default function HealthPage() {
           <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Auto-refreshes every 30s</span>
           <button className="btn btn-secondary btn-sm" onClick={check} disabled={loading}>
             {loading ? <span className="spinner" /> : (
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M10.5 6A4.5 4.5 0 1 1 8 2M10.5 2V5H7.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+              </svg>
             )}
             Refresh
           </button>

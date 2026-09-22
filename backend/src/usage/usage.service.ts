@@ -18,15 +18,23 @@ export class UsageService {
     private readonly usageLogRepo: Repository<UsageLog>,
   ) {}
 
-  async getUsage(rawKey: string) {
-    // Hash the raw key — same as the auth guard does
-    const keyHash = createHash('sha256').update(rawKey.trim()).digest('hex');
+  async getUsage(rawKeyOrId: string) {
+    const trimmed = rawKeyOrId.trim();
+    let virtualKey: VirtualKey | null = null;
 
-    const virtualKey = await this.virtualKeyRepo.findOne({ where: { keyHash } });
+    // Support both raw key (gw_...) hashed with SHA-256, or direct key UUID from admin dashboard
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+    if (isUuid) {
+      virtualKey = await this.virtualKeyRepo.findOne({ where: { id: trimmed } });
+    } else {
+      const keyHash = createHash('sha256').update(trimmed).digest('hex');
+      virtualKey = await this.virtualKeyRepo.findOne({ where: { keyHash } });
+    }
+
     if (!virtualKey) {
       throw new NotFoundException({
         error: 'key_not_found',
-        message: 'No virtual key found matching the provided key.',
+        message: 'No virtual key found matching the provided key or ID.',
       });
     }
 

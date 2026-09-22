@@ -292,8 +292,7 @@ export default function KeysPage() {
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={() => {
-                          const params = new URLSearchParams({ key: k.name })
-                          window.location.href = `/usage`
+                          window.location.href = `/usage?id=${encodeURIComponent(k.id)}`
                         }}
                       >
                         Inspect →
